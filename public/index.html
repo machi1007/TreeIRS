@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<!-- 在<head>區域內引入Socket.IO庫 -->
+    <script src="socket.io.js"></script>
+    <title>學生回答系統</title>
+    <style>
+        #chatbox {
+            border: 1px solid #ccc;
+            height: 300px;
+            overflow: auto;
+            padding: 10px;
+        }
+
+        img {
+            max-width: 100%;
+            max-height: 200px; /* 根據需要調整 */
+            cursor: pointer;
+        }
+
+        #statusBar {
+            margin-top: 10px;
+        }
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1;
+    padding-top: 50px;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.9);
+    overflow: auto;
+}
+
+.modal-content {
+    margin: auto;
+    display: block;
+    max-width: 90%;
+    max-height: 80%;
+}
+
+.close {
+    color: #ffffff;
+    position: absolute;
+    top: 15px;
+    right: 35px;
+    font-size: 40px;
+    font-weight: bold;
+    transition: 0.3s;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #f44336;
+}
+    </style>
+</head>
+
+<body>
+    <div id="roleSelection">
+    <h1>選擇身份</h1>
+        <button id="teacherButton" onclick="showTeacherCodePrompt()">教師</button>
+        <button id="studentButton" onclick="setRole('student')">學生</button>
+    </div>
+
+    <div id="studentSection" style="display: none;">
+        <h2>學生選擇座號</h2>
+        <select id="studentId">
+            <option value="">請選擇座號</option>
+            <script>
+                for (let i = 1; i <= 50; i++) {
+                    document.write(`<option value="${i}">${i}</option>`);
+                }
+            </script>
+        </select>
+        <label for="studentName">輸入姓名：</label>
+        <input type="text" id="studentName" placeholder="請輸入姓名..." />
+        <button onclick="chooseStudentAndName()">確定</button>
+    </div>
+
+        <div id="statusBar" style="display: none;">
+            <h3>學生：<span id="studentInfoName"></span> (座號 <span id="studentInfoId"></span>)</h3>
+        </div>
+
+        <div id="studentOptions" style="display: none;">
+            <button onclick="selectAnswer(1)">選項 1</button>
+            <button onclick="selectAnswer(2)">選項 2</button>
+            <button onclick="selectAnswer(3)">選項 3</button>
+            <button onclick="selectAnswer(4)">選項 4</button>
+        </div>
+
+
+    <h2>共同的聊天室</h2>
+    <div id="currentQuestion" style="display: none;"></div>
+    <div id="chatbox"></div>
+
+    <div id="messageInput" style="display: none;">
+        <input type="text" id="message" placeholder="請輸入訊息..." />
+        <button onclick="sendMessage()">送出</button>
+        <button onclick="openEmojiPicker()">選擇 Emoji</button>
+        <input type="file" id="imageInput" accept="image/*" onchange="handleImageSelect()">
+    </div>
+
+    <div id="emojiPicker" style="display: none;">
+        <button onclick="insertEmoji('😀')">😀</button>
+        <button onclick="insertEmoji('😃')">😃</button>
+        <button onclick="insertEmoji('😄')">😄</button>
+    </div>
+
+<div id="teacherSection" style="display: none;">
+    <h2>教師設置問題</h2>
+    <button onclick="startNewQuestion()">設置問題</button>
+    <button onclick="showStudentAnswers()">查看統計</button>
+    <button onclick="endQuestion()">結束問題</button>
+        <button onclick="resetSystem()">重置問題</button>
+
+<div id="imageModal" class="modal">
+    <span class="close" onclick="closeImageModal()">&times;</span>
+    <img id="modalImage" class="modal-content">
+</div>
+
+    <script>
+        let role = "";
+        let currentQuestion = "";
+        let studentAnswers = {};
+        let onlineStudents = [];
+        let answerCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        let modal = document.getElementById("imageModal");
+        let modalImage = document.getElementById("modalImage");
+        const correctCode = "1234";
+        const chatbox = document.getElementById("chatbox");
+        const messageInput = document.getElementById("messageInput");
+        const teacherButton = document.getElementById("teacherButton");
+        const studentButton = document.getElementById("studentButton");
+        const emojiPicker = document.getElementById("emojiPicker");
+        const imageInput = document.getElementById("imageInput");
+        const roleSelection = document.getElementById("roleSelection");
+        const statusBar = document.getElementById("statusBar");
+        const teacherSection = document.getElementById("teacherSection");
+ 
+        // 連線到Socket.IO伺服器
+    const socket = io();
+
+        // 設定身份為教師或學生
+        function setRole(selectedRole) {
+            role = selectedRole;
+            roleSelection.style.display = "none";
+            if (role === "student") {
+                document.getElementById("studentOptions").style.display = "none";
+                document.getElementById("studentSection").style.display = "block";
+                teacherSection.style.display = "none";
+
+
+
+
+            } else if (role === "teacher") {
+                document.getElementById("teacherSection").style.display = "block";
+                document.getElementById("messageInput").style.display = "block";
+                const statusBar = document.getElementById("statusBar");
+                statusBar.innerHTML = `<span style="font-size: 20px;font-weight: bold;">身分：教師</span>`;
+                document.getElementById("statusBar").style.display = "block";
+            }
+        }
+
+
+        // 顯示教師驗證碼提示
+        function showTeacherCodePrompt() {
+            const enteredCode = prompt("輸入驗證碼：");
+            if (enteredCode === correctCode) {
+                setRole("teacher");
+
+            } else {
+                alert("驗證碼錯誤，無法選擇教師身份。");
+            }
+        }
+
+        // 選擇學生座號和姓名
+        function chooseStudentAndName() {
+            const studentId = document.getElementById("studentId").value;
+            const studentName = document.getElementById("studentName").value;
+            if (studentId && studentName) {
+                onlineStudents.push({ id: studentId, name: studentName });
+                document.getElementById("studentInfoName").textContent = studentName;
+                document.getElementById("studentInfoId").textContent = studentId;
+                document.getElementById("messageInput").style.display = "block";
+                role = "student";
+                document.getElementById("statusBar").style.display = "block";
+                document.getElementById("studentSection").style.display = "none";
+            }
+        }
+
+        // 選擇答案
+        function selectAnswer(answer) {
+            const studentId = document.getElementById("studentId").value;
+            const studentName = document.getElementById("studentName").value;
+            appendToChat(`學生 ${studentName} (座號 ${studentId}) 選擇了選項 ${answer}`);
+            answerCounts[answer]++;
+        // 顯示當前問題
+    if (currentQuestion) {
+        appendToChat(`<strong>目前問題："${currentQuestion}"</strong>`);
+    }
+        }
+
+        // 顯示學生回答統計
+        function showStudentAnswers() {
+            if (role === "teacher") {
+                let answerList = "學生回答統計：\n";
+                for (const [answer, count] of Object.entries(answerCounts)) {
+                    answerList += `選項 ${answer}: ${count} 次\n`;
+                }
+                appendToChat(answerList);
+            }
+
+        }
+
+
+        // 重置系統(重置問題)
+        function resetSystem() {
+            currentQuestion = "";
+            studentAnswers = {};
+            answerCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+            currentQuestion = ""; // 重置目前問題
+    
+            // 隱藏顯示問題的 <div>
+            const currentQuestionDiv = document.getElementById("currentQuestion");
+            currentQuestionDiv.style.display = "none";
+        }
+
+
+        // 顯示教師設定的問題輸入框
+        function showQuestionInput() {
+            if (role === "teacher") {
+                const questionInput = prompt("請輸入問題：");
+                if (questionInput) {
+                    currentQuestion = questionInput;
+                    appendToChat(`教師設定問題：${currentQuestion}`);
+        // 顯示目前問題
+        const currentQuestionDiv = document.getElementById("currentQuestion");
+        currentQuestionDiv.innerHTML = `<strong>目前問題："${currentQuestion}"</strong>`;
+        currentQuestionDiv.style.display = "block";
+                }
+            }
+            document.getElementById("studentOptions").style.display = "block";
+            document.getElementById("teacherMessageInput").style.display = "block";
+        }
+
+
+        // 顯示學生回答統計
+        function showStudentAnswers() {
+            if (role === "teacher") {
+                let answerList = "學生回答統計：\n";
+                for (const [answer, count] of Object.entries(answerCounts)) {
+                    answerList += `選項 ${answer}: ${count} 次\n`;
+                }
+                appendToChat(answerList);
+            }
+        }
+
+
+        // 開始新問題
+        function startNewQuestion() {
+            resetAnswerCounts();
+            showQuestionInput();
+        // 顯示當前問題
+    if (currentQuestion) {
+        appendToChat(`<strong>目前問題："${currentQuestion}"</strong>`);
+    }
+        }
+
+        // 重置答案計數
+        function resetAnswerCounts() {
+            answerCounts = { "1": 0, "2": 0, "3": 0, "4": 0 };
+        }
+
+
+        function endQuestion() {
+            let statisticsMessage = "結果統計:\n";
+            for (let [answer, count] of Object.entries(answerCounts)) {
+                statisticsMessage += `選項 ${answer}: ${count} 人\n`;
+            }
+            appendToChat(statisticsMessage);
+            resetAnswerCounts();
+
+
+            currentQuestion = ""; // 重置目前問題
+    
+            // 隱藏顯示問題的 <div>
+            const currentQuestionDiv = document.getElementById("currentQuestion");
+            currentQuestionDiv.style.display = "none";
+
+            document.getElementById("studentOptions").style.display = "none";
+            document.getElementById("teacherMessageInput").style.display = "none";
+
+        }
+
+        function handleEmojiSelect(emoji) {
+            const currentMessage = document.getElementById("message").value;
+            document.getElementById("message").value = currentMessage + emoji;
+        }
+
+        function teacherSetNewQuestion() {
+            if (role === "teacher") {
+                currentQuestion = prompt("請輸入新的問題：");
+                if (currentQuestion) {
+                    appendToChat(`教師提問：${currentQuestion}`);
+                }
+            }
+        }
+
+        function showOnlineStudents() {
+            let onlineList = "目前在線學生：\n";
+            onlineStudents.forEach(student => {
+                onlineList += `座號 ${student.id}: ${student.name}\n`;
+            });
+            appendToChat(onlineList);
+        }
+
+        function logout() {
+            role = "";
+            resetSystem();
+        }
+
+function openImageModal(imageSrc) {
+    modal.style.display = "block";
+    modalImage.src = imageSrc;
+}
+
+function closeImageModal() {
+    modal.style.display = "none";
+}
+
+
+
+// 送出訊息
+function sendMessage() {
+    const inputMessage = document.getElementById("message").value;
+    if (inputMessage.trim() === "") return; // 避免空訊息
+
+    if (role === "teacher") {
+        appendToChat(`教師：${inputMessage}`);
+    } else {
+        const studentId = document.getElementById("studentId").value;
+        const studentName = document.getElementById("studentName").value;
+        appendToChat(`學生 ${studentName} (座號 ${studentId})：${inputMessage}`);
+    }
+    document.getElementById("message").value = ""; // 送出後清空輸入
+
+    // 發送訊息的函數
+    const defaultSocketMessage = "您的訊息"; // 替換為您的訊息內容
+    socket.emit('message', defaultSocketMessage); // 發送訊息
+}
+
+// 接收訊息的處理
+socket.on('message', (message) => {
+    // 在這裡處理接收到的訊息
+    console.log('接收到訊息:', message);
+});
+
+
+
+        // 打開 Emoji 選擇器
+        function openEmojiPicker() {
+            emojiPicker.style.display = "block";
+        }
+
+        // 插入 Emoji
+        function insertEmoji(emoji) {
+            const messageInput = document.getElementById("message");
+            messageInput.value += emoji;
+            emojiPicker.style.display = "none";
+        }
+
+
+        // 處理選擇的圖片
+        function handleImageSelect() {
+            const selectedImage = imageInput.files[0];
+            if (selectedImage) {
+                const reader = new FileReader();
+                reader.onload = function (event) {
+                    const imageUrl = event.target.result;
+                    insertImage(imageUrl);
+                };
+                reader.readAsDataURL(selectedImage);
+            }
+        }
+
+        // 插入圖片到聊天室
+        function insertImage(imageUrl) {
+            const imageTag = `<img src="${imageUrl}" alt="圖片" />`;
+            appendToChat(imageTag);
+        }
+
+        // 附加訊息到聊天室
+    function appendToChat(message) {
+    chatbox.innerHTML += `<p>${message}</p>`;
+    chatbox.scrollTop = chatbox.scrollHeight;
+
+
+
+    // 檢查是否有圖片，並為每個圖片添加放大功能
+    const images = chatbox.getElementsByTagName("img");
+    for (const image of images) {
+        image.addEventListener("click", () => {
+            openImageModal(image.src);
+        });
+    }
+}
+
+    </script>
+</body>
+</html>
